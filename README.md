@@ -1,5 +1,5 @@
 # child_monitoring_app
-App is designed to monitor keystrokes of younger children helpful in parental supervision
+Android app is designed to monitor keystrokes of younger children helpful in parental supervision
 
 App runs as background service indefinitely on android >= 8.0
 
