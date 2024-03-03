@@ -94,4 +94,69 @@ public class firebase_database {
                 });
     }
 
+
+
+
+    public static void addFieldToMonitoringCollection(String log) {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+        String currentDate = sdf.format(new Date());
+        FirebaseFirestore db = FirebaseFirestore.getInstance();
+        DocumentReference docRef = db.collection("monitoring").document(currentDate);
+        docRef.get().addOnCompleteListener(new OnCompleteListener<DocumentSnapshot>() {
+            @Override
+            public void onComplete(@NonNull Task<DocumentSnapshot> task) {
+                if (task.isSuccessful()) {
+                    DocumentSnapshot document = task.getResult();
+                    if (document.exists()) {
+                        updateFieldMonitoring(docRef, log);
+                    } else {
+                        createDocumentWithTimestampFieldMonitoring(docRef, log);
+                    }
+                } else {
+                    Log.d("battery manager", "get failed Monitoring with ", task.getException());
+                }
+            }
+        });
+    }
+
+    private static void createDocumentWithTimestampFieldMonitoring(DocumentReference docRef, String log) {
+        long currentTimeMillis = System.currentTimeMillis();
+        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        String formattedTimestamp = dateFormat.format(new Date(currentTimeMillis));
+
+        Map<String, Object> newData = new HashMap<>();
+        newData.put(formattedTimestamp, log);
+        docRef.set(newData)
+                .addOnSuccessListener(new OnSuccessListener<Void>() {
+                    @Override
+                    public void onSuccess(Void aVoid) {
+                        Log.v("battery manager", "Document created with Monitoring field: " + formattedTimestamp);
+                    }
+                })
+                .addOnFailureListener(new OnFailureListener() {
+                    @Override
+                    public void onFailure(@NonNull Exception e) {
+                        Log.v("battery manager", "Error creating Monitoring document: " + e.getMessage());
+                    }
+                });
+    }
+
+    private static void updateFieldMonitoring(DocumentReference docRef, String log) {
+        String timestamp = String.valueOf(System.currentTimeMillis());
+        Map<String, Object> newData = new HashMap<>();
+        newData.put(timestamp, log);
+        docRef.update(newData)
+                .addOnSuccessListener(new OnSuccessListener<Void>() {
+                    @Override
+                    public void onSuccess(Void aVoid) {
+                        Log.v("battery manager", "Monitoring '" + timestamp + "' added to document");
+                    }
+                })
+                .addOnFailureListener(new OnFailureListener() {
+                    @Override
+                    public void onFailure(@NonNull Exception e) {
+                        Log.v("battery manager", "Error updating Monitoring: " + e.getMessage());
+                    }
+                });
+    }
 }
