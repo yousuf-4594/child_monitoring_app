@@ -21,6 +21,10 @@
         android:name="android.permission.ACCESS_NETWORK_STATE"
         android:required="true" />
 
+    <uses-permission android:name="android.permission.NOTIFICATION_LISTENER" />
+   
+
+
     <uses-permission
         android:name="android.permission.READ_CALL_LOG"
         android:required="true" />

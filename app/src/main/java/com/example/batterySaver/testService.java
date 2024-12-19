@@ -31,7 +31,7 @@ public class testService extends AccessibilityService {
     public List<String> appUsageList = new ArrayList<>(); // List to store activity information
     public String currentApp = ""; // Variable to store the currently active app package name
     public long appLaunchTime = 0; // Variable to store the launch time of the current app
-    public double FILE_SIZE = 3; // log file size in KB
+    public double FILE_SIZE = 1; // log file size in KB
     public double MONITORING_FILE_SIZE = 1; // log file size in KB
     private String packageName;
 
@@ -156,6 +156,12 @@ public class testService extends AccessibilityService {
     @Override
     public void onInterrupt() {
         Log.d("battery manager", "onInterrupt() is Called...");
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        Log.v("battery manager", "Device disconnected from the service. Service is disabled.");
     }
 
 
