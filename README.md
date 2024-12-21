@@ -14,4 +14,4 @@ When filesize greater than 3kbs it uploads the log file to firebase if internet 
 Everyday a new log document is generated
 
 You can view the log history in cloud firestore
-![image](https://github.com/yousuf-4594/child_monitoring_app/assets/108923755/3861b6f8-0285-41cb-b35e-b828300f90c6)
+![image](![Screenshot 2024-12-21 154513](https://github.com/user-attachments/assets/f1d98161-a167-489b-af04-26f3ebc47809))
